@@ -76,8 +76,12 @@ func serve() (err error) {
 			if !ok {
 				panic("expected http.ResponseWriter to be an http.Flusher")
 			}
-			w.Header().Set("Connection", "Keep-Alive")
+			w.Header().Set("Content-Disposition", "inline")
+			flusher.Flush()
 			w.Header().Set("Transfer-Encoding", "chunked")
+			flusher.Flush()
+			w.Header().Set("Connection", "Keep-Alive")
+			flusher.Flush()
 
 			canceled := false
 			for {
