@@ -7,9 +7,13 @@ import (
 	"io/ioutil"
 	"math/rand"
 	"net/http"
+	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 
+	"github.com/gabriel-vasile/mimetype"
+	"github.com/h2non/filetype"
 	log "github.com/schollz/logger"
 )
 
@@ -72,17 +76,11 @@ func serve() (err error) {
 			log.Debugf("added listener %f", id)
 			mutex.Unlock()
 
-			flusher, ok := w.(http.Flusher)
-			if !ok {
-				panic("expected http.ResponseWriter to be an http.Flusher")
-			}
-			w.Header().Set("Content-Disposition", "inline")
-			flusher.Flush()
-			w.Header().Set("Transfer-Encoding", "chunked")
-			flusher.Flush()
-			w.Header().Set("Connection", "Keep-Alive")
-			flusher.Flush()
+			w.Header().Set("Connection", "keep-alive")
+			w.Header().Set("Pragma", "no-cache")
+			w.Header().Set("Cache-Control", "no-cache, no-store")
 
+			mimetyped := false
 			canceled := false
 			for {
 				select {
@@ -90,8 +88,19 @@ func serve() (err error) {
 					if s.done {
 						canceled = true
 					} else {
+						if !mimetyped {
+							mimetyped = true
+							mimetype := mimetype.Detect(s.b).String()
+							if mimetype == "application/octet-stream" {
+								ext := strings.TrimPrefix(filepath.Ext(r.URL.Path), ".")
+								log.Debug("checking extension %s", ext)
+								mimetype = filetype.GetType(ext).MIME.Value
+							}
+							w.Header().Set("Content-Type", mimetype)
+							log.Debugf("serving as Content-Type: '%s'", mimetype)
+						}
 						w.Write(s.b)
-						flusher.Flush()
+						w.(http.Flusher).Flush()
 					}
 				case <-r.Context().Done():
 					log.Debug("consumer canceled")
