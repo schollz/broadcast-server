@@ -4,6 +4,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"math/rand"
 	"net/http"
 	"runtime"
@@ -49,6 +50,13 @@ func serve() (err error) {
 		defer func() {
 			log.Debugf("finished %s\n", r.URL.Path)
 		}()
+
+		if r.URL.Path == "/" {
+			// serve the README
+			b, _ := ioutil.ReadFile("README.md")
+			w.Write(b)
+			return
+		}
 
 		mutex.Lock()
 		if _, ok := channels[r.URL.Path]; !ok {
