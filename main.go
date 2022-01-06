@@ -3,6 +3,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	"io"
 	"math/rand"
 	"net/http"
 	"runtime"
@@ -19,10 +20,12 @@ func init() {
 	flag.BoolVar(&flagDebug, "debug", false, "debug mode")
 }
 func main() {
+	flag.Parse()
 	// use all of the processors
 	runtime.GOMAXPROCS(runtime.NumCPU())
 	if flagDebug {
 		log.SetLevel("debug")
+		log.Debug("debug mode")
 	} else {
 		log.SetLevel("info")
 	}
@@ -94,10 +97,14 @@ func serve() (err error) {
 			mutex.Unlock()
 		} else if r.Method == "POST" {
 			buffer := make([]byte, 2048)
+			cancel := true
 			for {
 				n, err := r.Body.Read(buffer)
 				if err != nil {
-					log.Debugf("err: %v", err)
+					log.Debugf("err: %s", err)
+					if err == io.ErrUnexpectedEOF {
+						cancel = false
+					}
 					break
 				}
 				mutex.Lock()
@@ -108,11 +115,13 @@ func serve() (err error) {
 				}
 				mutex.Unlock()
 			}
-			mutex.Lock()
-			for _, c := range channels[r.URL.Path] {
-				c <- stream{done: true}
+			if cancel {
+				mutex.Lock()
+				for _, c := range channels[r.URL.Path] {
+					c <- stream{done: true}
+				}
+				mutex.Unlock()
 			}
-			mutex.Unlock()
 		}
 	}
 
