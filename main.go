@@ -11,6 +11,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/gabriel-vasile/mimetype"
 	"github.com/h2non/filetype"
@@ -61,6 +62,8 @@ func serve() (err error) {
 			w.Write(b)
 			return
 		}
+
+		_, doStream := r.URL.Query()["stream"]
 
 		mutex.Lock()
 		if _, ok := channels[r.URL.Path]; !ok {
@@ -119,7 +122,31 @@ func serve() (err error) {
 		} else if r.Method == "POST" {
 			buffer := make([]byte, 2048)
 			cancel := true
+			isdone := false
+			lifetime := 0
 			for {
+				if !doStream {
+					select {
+					case <-r.Context().Done():
+						isdone = true
+					default:
+					}
+					if isdone {
+						log.Debug("is done")
+						break
+					}
+					mutex.Lock()
+					numListeners := len(channels[r.URL.Path])
+					mutex.Unlock()
+					if numListeners == 0 {
+						time.Sleep(1 * time.Second)
+						lifetime++
+						if lifetime > 600 {
+							isdone = true
+						}
+						continue
+					}
+				}
 				n, err := r.Body.Read(buffer)
 				if err != nil {
 					log.Debugf("err: %s", err)
