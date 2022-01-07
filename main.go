@@ -156,19 +156,21 @@ func serve() (err error) {
 					break
 				}
 				mutex.Lock()
-				for _, c := range channels[r.URL.Path] {
+				channels_current := channels[r.URL.Path]
+				mutex.Unlock()
+				for _, c := range channels_current {
 					var b2 = make([]byte, n)
 					copy(b2, buffer[:n])
 					c <- stream{b: b2}
 				}
-				mutex.Unlock()
 			}
 			if cancel {
 				mutex.Lock()
-				for _, c := range channels[r.URL.Path] {
+				channels_current := channels[r.URL.Path]
+				mutex.Unlock()
+				for _, c := range channels_current {
 					c <- stream{done: true}
 				}
-				mutex.Unlock()
 			}
 		}
 	}
