@@ -51,6 +51,10 @@ func serve() (err error) {
 	mutex := &sync.Mutex{}
 
 	handler := func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+    		w.Header().Set("Access-Control-Allow-Methods", "POST, GET, OPTIONS, PUT, DELETE")
+    		w.Header().Set("Access-Control-Allow-Headers", "Accept, Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization")
+
 		log.Debugf("opened %s %s", r.Method, r.URL.Path)
 		defer func() {
 			log.Debugf("finished %s\n", r.URL.Path)
@@ -60,6 +64,10 @@ func serve() (err error) {
 			// serve the README
 			b, _ := ioutil.ReadFile("README.md")
 			w.Write(b)
+			return
+		}
+		if r.URL.Path=="/favicon.ico" {
+			w.WriteHeader(http.StatusOK)
 			return
 		}
 
@@ -172,6 +180,8 @@ func serve() (err error) {
 					c <- stream{done: true}
 				}
 			}
+		} else {
+			w.WriteHeader(http.StatusOK)
 		}
 	}
 
