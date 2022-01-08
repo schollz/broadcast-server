@@ -65,7 +65,7 @@ func serve() (err error) {
 		<body>
 				<h1>Current broadcasts:</h1>
 				{{range .Items}}<a href="/{{ . }}">{{ . }}</a><br> <audio controls preload="none">
-					<source src="/{{ . }}" type="audio/mpeg">
+					<source src="/{{ . }}?r={{$.Rand}}" type="audio/mpeg">
 					Your browser does not support the audio element.
 				</audio><br><br>
 			  {{else}}<div><strong>No broadcasts currently.</strong></div>{{end}}
@@ -99,9 +99,11 @@ func serve() (err error) {
 			data := struct {
 				Title string
 				Items []string
+				Rand string
 			}{
 				Title: "Current broadcasts",
 				Items: adverts,
+				Rand: fmt.Sprintf("%d",rand.Int31()),
 			}
 			err = tplmain.Execute(w, data)
 			return
