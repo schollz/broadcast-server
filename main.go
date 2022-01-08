@@ -3,8 +3,8 @@ package main
 import (
 	"flag"
 	"fmt"
+	"html/template"
 	"io"
-	"io/ioutil"
 	"math/rand"
 	"net/http"
 	"path/filepath"
@@ -25,6 +25,7 @@ func init() {
 	flag.IntVar(&flagPort, "port", 9222, "port for server")
 	flag.BoolVar(&flagDebug, "debug", false, "debug mode")
 }
+
 func main() {
 	flag.Parse()
 	// use all of the processors
@@ -48,12 +49,38 @@ type stream struct {
 // Serve will start the server
 func serve() (err error) {
 	channels := make(map[string]map[float64]chan stream)
+	advertisements := make(map[string]bool)
 	mutex := &sync.Mutex{}
+	const tpl = `
+	<!DOCTYPE html>
+	<html>
+		<head>
+			<meta charset="UTF-8">
+			<meta name="viewport" content="width=device-width, initial-scale=1">
+			<title>{{.Title}}</title>
+			<style type="text/css">body{margin:40px
+				auto;max-width:650px;line-height:1.6;font-size:18px;padding:0
+				10px}h1,h2,h3{line-height:1.2}</style>
+		</head>
+		<body>
+				<h1>Current broadcasts:</h1>
+				{{range .Items}}<a href="/{{ . }}">{{ . }}</a><br> <audio controls preload="none">
+					<source src="/{{ . }}" type="audio/mpeg">
+					Your browser does not support the audio element.
+				</audio><br><br>
+			  {{else}}<div><strong>No broadcasts currently.</strong></div>{{end}}
+			
+		</body>
+	</html>`
+	tplmain, err := template.New("webpage").Parse(tpl)
+	if err != nil {
+		return
+	}
 
 	handler := func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
-    		w.Header().Set("Access-Control-Allow-Methods", "POST, GET, OPTIONS, PUT, DELETE")
-    		w.Header().Set("Access-Control-Allow-Headers", "Accept, Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization")
+		w.Header().Set("Access-Control-Allow-Methods", "POST, GET, OPTIONS, PUT, DELETE")
+		w.Header().Set("Access-Control-Allow-Headers", "Accept, Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization")
 
 		log.Debugf("opened %s %s", r.Method, r.URL.Path)
 		defer func() {
@@ -62,16 +89,42 @@ func serve() (err error) {
 
 		if r.URL.Path == "/" {
 			// serve the README
-			b, _ := ioutil.ReadFile("README.md")
-			w.Write(b)
+			adverts := []string{}
+			mutex.Lock()
+			for advert, _ := range advertisements {
+				adverts = append(adverts, strings.TrimPrefix(advert, "/"))
+			}
+			mutex.Unlock()
+
+			data := struct {
+				Title string
+				Items []string
+			}{
+				Title: "Current broadcasts",
+				Items: adverts,
+			}
+			err = tplmain.Execute(w, data)
 			return
 		}
-		if r.URL.Path=="/favicon.ico" {
+		if r.URL.Path == "/favicon.ico" {
 			w.WriteHeader(http.StatusOK)
 			return
 		}
 
-		_, doStream := r.URL.Query()["stream"]
+		v, ok := r.URL.Query()["stream"]
+		doStream := ok && v[0] == "true"
+
+		v, ok = r.URL.Query()["advertise"]
+		if ok && v[0] == "true" {
+			mutex.Lock()
+			advertisements[r.URL.Path] = true
+			mutex.Unlock()
+			defer func() {
+				mutex.Lock()
+				delete(advertisements, r.URL.Path)
+				mutex.Unlock()
+			}()
+		}
 
 		mutex.Lock()
 		if _, ok := channels[r.URL.Path]; !ok {
