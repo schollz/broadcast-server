@@ -123,10 +123,10 @@ func serve() (err error) {
 			}
 
 			mutex.Lock()
-			close(channels[r.URL.Path][id])
 			delete(channels[r.URL.Path], id)
 			log.Debugf("removed listener %f", id)
 			mutex.Unlock()
+			close(channel)
 		} else if r.Method == "POST" {
 			buffer := make([]byte, 2048)
 			cancel := true
