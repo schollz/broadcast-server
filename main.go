@@ -115,7 +115,7 @@ func serve() (err error) {
 		doStream := ok && v[0] == "true"
 
 		v, ok = r.URL.Query()["advertise"]
-		if ok && v[0] == "true" {
+		if ok && v[0] == "true" && doStream {
 			mutex.Lock()
 			advertisements[r.URL.Path] = true
 			mutex.Unlock()
