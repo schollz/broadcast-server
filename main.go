@@ -7,10 +7,14 @@ import (
 	"io"
 	"math/rand"
 	"net/http"
+	"os"
+	"path"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/gabriel-vasile/mimetype"
@@ -20,14 +24,17 @@ import (
 
 var flagDebug bool
 var flagPort int
+var flagFolder string
 
 func init() {
+	flag.StringVar(&flagFolder, "folder", "archived", "folder to save archived")
 	flag.IntVar(&flagPort, "port", 9222, "port for server")
 	flag.BoolVar(&flagDebug, "debug", false, "debug mode")
 }
 
 func main() {
 	flag.Parse()
+	os.MkdirAll(flagFolder, os.ModePerm)
 	// use all of the processors
 	runtime.GOMAXPROCS(runtime.NumCPU())
 	if flagDebug {
@@ -49,6 +56,7 @@ type stream struct {
 // Serve will start the server
 func serve() (err error) {
 	channels := make(map[string]map[float64]chan stream)
+	archived := make(map[string]*os.File)
 	advertisements := make(map[string]bool)
 	mutex := &sync.Mutex{}
 	const tpl = `
@@ -60,7 +68,12 @@ func serve() (err error) {
 			<title>{{.Title}}</title>
 			<style type="text/css">body{margin:40px
 				auto;max-width:650px;line-height:1.6;font-size:18px;padding:0
-				10px}h1,h2,h3{line-height:1.2}</style>
+				10px}h1,h2,h3{line-height:1.2}
+				.delete {
+					color:#000;
+					text-decoration:none;
+				}
+			</style>
 		</head>
 		<body>
 				<h1>Current broadcasts:</h1>
@@ -69,6 +82,13 @@ func serve() (err error) {
 					Your browser does not support the audio element.
 				</audio><br><br>
 			  {{else}}<div><strong>No broadcasts currently.</strong></div>{{end}}
+				<h2>Archived broadcasts:</h2>
+				{{if .Archived}}<p><small>click ❌ to remove an archive (<em>maybe don't remove ones that you didn't create</em>).</small></p>{{end}}
+				{{range .Archived}}<a href="/{{ .FullFilename }}">{{ .Filename }}</a> <small>({{.Created.Format "Jan 02, 2006 15:04:05 UTC"}}, <a class="delete" href="/{{ .FullFilename }}?remove=true">❌</a>)</small><br> <audio controls preload="none">
+					<source src="/{{ .FullFilename }}?r={{$.Rand}}" type="audio/mpeg">
+					Your browser does not support the audio element.
+				</audio><br><br>
+			  {{else}}<div><strong>No archives currently.</strong></div>{{end}}
 			
 		</body>
 	</html>`
@@ -91,30 +111,73 @@ func serve() (err error) {
 			// serve the README
 			adverts := []string{}
 			mutex.Lock()
-			for advert, _ := range advertisements {
+			for advert := range advertisements {
 				adverts = append(adverts, strings.TrimPrefix(advert, "/"))
 			}
 			mutex.Unlock()
 
+			active := make(map[string]struct{})
+			// mutex.Lock()
+			// for ch := range channels {
+			// 	active[strings.TrimPrefix(ch, "/")] = struct{}{}
+			// }
+			// log.Debugf("active: %+v", active)
+			// mutex.Unlock()
+
 			data := struct {
-				Title string
-				Items []string
-				Rand string
+				Title    string
+				Items    []string
+				Rand     string
+				Archived []ArchivedFile
 			}{
-				Title: "Current broadcasts",
-				Items: adverts,
-				Rand: fmt.Sprintf("%d",rand.Int31()),
+				Title:    "Current broadcasts",
+				Items:    adverts,
+				Rand:     fmt.Sprintf("%d", rand.Int31()),
+				Archived: listArchived(active),
 			}
 			err = tplmain.Execute(w, data)
 			return
-		}
-		if r.URL.Path == "/favicon.ico" {
+		} else if r.URL.Path == "/favicon.ico" {
 			w.WriteHeader(http.StatusOK)
+			return
+		} else if strings.HasPrefix(r.URL.Path, "/"+flagFolder+"/") {
+			filename := filepath.Clean(strings.TrimPrefix(r.URL.Path, "/"+flagFolder+"/"))
+			filename = path.Join(flagFolder, filename)
+			v, ok := r.URL.Query()["remove"]
+			if ok && v[0] == "true" {
+				os.Remove(filename)
+				w.Write([]byte(fmt.Sprintf("removed %s", filename)))
+			} else {
+				http.ServeFile(w, r, filename)
+			}
 			return
 		}
 
 		v, ok := r.URL.Query()["stream"]
 		doStream := ok && v[0] == "true"
+
+		v, ok = r.URL.Query()["archive"]
+		doArchive := ok && v[0] == "true"
+
+		if doArchive && r.Method == "POST" {
+			if _, ok := archived[r.URL.Path]; !ok {
+				folderName := path.Join(flagFolder, time.Now().Format("200601021504"))
+				os.MkdirAll(folderName, os.ModePerm)
+				archived[r.URL.Path], err = os.Create(path.Join(folderName, strings.TrimPrefix(r.URL.Path, "/")))
+				if err != nil {
+					log.Error(err)
+				}
+			}
+			defer func() {
+				mutex.Lock()
+				if _, ok := archived[r.URL.Path]; ok {
+					log.Debugf("closed archive for %s", r.URL.Path)
+					archived[r.URL.Path].Close()
+					delete(archived, r.URL.Path)
+				}
+				mutex.Unlock()
+			}()
+		}
 
 		v, ok = r.URL.Query()["advertise"]
 		if ok && v[0] == "true" && doStream {
@@ -218,6 +281,11 @@ func serve() (err error) {
 					}
 					break
 				}
+				if doArchive {
+					mutex.Lock()
+					archived[r.URL.Path].Write(buffer[:n])
+					mutex.Unlock()
+				}
 				mutex.Lock()
 				channels_current := channels[r.URL.Path]
 				mutex.Unlock()
@@ -246,4 +314,50 @@ func serve() (err error) {
 		log.Error(err)
 	}
 	return
+}
+
+type ArchivedFile struct {
+	Filename     string
+	FullFilename string
+	Created      time.Time
+}
+
+func listArchived(active map[string]struct{}) (afiles []ArchivedFile) {
+	fnames := []string{}
+	err := filepath.Walk(flagFolder,
+		func(path string, info os.FileInfo, err error) error {
+			if err != nil {
+				return err
+			}
+			if !info.IsDir() {
+				fnames = append(fnames, path)
+			}
+			return nil
+		})
+	if err != nil {
+		return
+	}
+	for _, fname := range fnames {
+		_, onlyfname := path.Split(fname)
+		finfo, _ := os.Stat(fname)
+		stat_t := finfo.Sys().(*syscall.Stat_t)
+		created := timespecToTime(stat_t.Ctim)
+		if _, ok := active[onlyfname]; !ok {
+			afiles = append(afiles, ArchivedFile{
+				Filename:     onlyfname,
+				FullFilename: fname,
+				Created:      created,
+			})
+		}
+	}
+
+	sort.Slice(afiles, func(i, j int) bool {
+		return afiles[i].Created.After(afiles[j].Created)
+	})
+
+	return
+}
+
+func timespecToTime(ts syscall.Timespec) time.Time {
+	return time.Unix(int64(ts.Sec), int64(ts.Nsec))
 }
