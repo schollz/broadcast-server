@@ -1,4 +1,4 @@
-module github.com/schollz/duct/broadcast
+module github.com/schollz/broadcast-server
 
 go 1.17
 
