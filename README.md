@@ -1,6 +1,7 @@
 # broadcast
 
-A simple Go server that broadcasts any data/stream. Read more about it [on my blog](https://schollz.com/blog/radio/).
+A simple Go server that broadcasts any data/stream. Read more about it [on my blog](https://schollz.com/blog/radio/). The code was written based of [schollz/duct](https://github.com/schollz/duct), which is a fork of of [patchbay-pub](https://github.com/patchbay-pub/patchbay-simple-server).
+
 
 ## Usage
 
