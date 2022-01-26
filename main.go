@@ -77,6 +77,7 @@ func serve() (err error) {
 				
 summary {
 	white-space: nowrap;
+	cursor:pointer;
  }
  
  details > summary {
