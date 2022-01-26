@@ -166,6 +166,8 @@ summary {
 			return
 		} else if strings.HasPrefix(r.URL.Path, "/"+flagFolder+"/") {
 			filename := filepath.Clean(strings.TrimPrefix(r.URL.Path, "/"+flagFolder+"/"))
+			// This extra join implicitly does a clean and thereby prevents directory traversal
+			filename = path.Join("/", filename)
 			filename = path.Join(flagFolder, filename)
 			v, ok := r.URL.Query()["remove"]
 			if ok && v[0] == "true" {
