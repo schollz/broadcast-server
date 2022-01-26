@@ -107,7 +107,15 @@ summary {
 				<h2>Archived broadcasts:</h2>
 				{{if .Archived}}<p><small>click ❌ to remove an archive (<em>maybe don't remove ones that you didn't create</em>).</small></p>{{end}}
 				{{range .Archived}}<a href="/{{ .FullFilename }}">{{ .Filename }}</a> <small>({{.Created.Format "Jan 02, 2006 15:04:05 UTC"}}, 
-				<details><summary>❌</summary>are you sure? <details><summary>click->👍</summary>absolutely sure? <a class="delete" href="/{{ .FullFilename }}?remove=true">🗑️</a></details></details>)
+				<details><summary>❌</summary>are you sure? <details><summary>click->👍</summary>absolutely sure? <a class="delete" href="/{{ .FullFilename }}?remove=true">🗑️</a></details></details>
+				<details>
+				  <summary>✎</summary>
+					<form method="get" action="/{{ .FullFilename }}">
+					  <input type=hidden name=rename value=true>
+						Rename to: <input type=text name=newname value="{{ .Filename }}">
+						<input type=submit>
+					</form>
+				</details>)
 				</small><br> <audio controls preload="none">
 					<source src="/{{ .FullFilename }}?r={{$.Rand}}" type="audio/mpeg">
 					Your browser does not support the audio element.
@@ -172,7 +180,22 @@ summary {
 				os.Remove(filename)
 				w.Write([]byte(fmt.Sprintf("removed %s", filename)))
 			} else {
-				http.ServeFile(w, r, filename)
+				v, ok := r.URL.Query()["rename"]
+				if ok && v[0] == "true" {
+					newname_param, ok := r.URL.Query()["newname"]
+					if(!ok) {
+						w.Write([]byte(fmt.Sprintf("ERROR")))
+						return
+					}
+					// This join with "/" prevents directory traversal with an implicit clean
+					newname := newname_param[0]
+					newname = path.Join("/", newname)
+					newname = path.Join(flagFolder, newname)
+					os.Rename(filename, newname)
+					w.Write([]byte(fmt.Sprintf("renamed %s to %s", filename, newname)))
+				} else {
+					http.ServeFile(w, r, filename)
+				}
 			}
 			return
 		}
