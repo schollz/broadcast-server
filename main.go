@@ -105,8 +105,8 @@ summary {
 				</audio><br><br>
 			  {{else}}<div><strong>No broadcasts currently.</strong></div>{{end}}
 				<h2>Archived broadcasts:</h2>
-				{{if .Archived}}<p><small>click ❌ to remove an archive (<em>maybe don't remove ones that you didn't create</em>).</small></p>{{end}}
-				{{range .Archived}}<a href="/{{ .FullFilename }}">{{ .Filename }}</a> <small>({{.Created.Format "Jan 02, 2006 15:04:05 UTC"}}, 
+				{{if .Archived}}<p><small>click ❌ to remove an archive, ✎ to rename an archive (<em>maybe don't remove/rename ones that you didn't create</em>).</small></p>{{end}}
+				{{range .Archived}}<a href="/{{ .FullFilename }}">{{ .Filename }}</a> <small>({{.Created.Format "Jan 02, 2006 15:04:05 UTC"}},
 				<details><summary>❌</summary>are you sure? <details><summary>click->👍</summary>absolutely sure? <a class="delete" href="/{{ .FullFilename }}?remove=true">🗑️</a></details></details>
 				<details>
 				  <summary>✎</summary>
