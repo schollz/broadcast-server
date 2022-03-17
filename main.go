@@ -1,11 +1,11 @@
 package main
 
 import (
+	"embed"
+	_ "embed"
 	"flag"
 	"fmt"
-	"html/template"
 	"io"
-	"io/ioutil"
 	"math/rand"
 	"net/http"
 	"os"
@@ -16,12 +16,19 @@ import (
 	"strings"
 	"sync"
 	"syscall"
+	"text/template"
 	"time"
 
 	"github.com/gabriel-vasile/mimetype"
 	"github.com/h2non/filetype"
 	log "github.com/schollz/logger"
 )
+
+//go:embed template.html
+var templateData string
+
+//go:embed static/*
+var staticContent embed.FS
 
 var flagDebug bool
 var flagPort int
@@ -56,6 +63,11 @@ type stream struct {
 
 // Serve will start the server
 func serve() (err error) {
+	tplmain, err := template.New("webpage").Parse(templateData)
+	if err != nil {
+		return
+	}
+
 	channels := make(map[string]map[float64]chan stream)
 	archived := make(map[string]*os.File)
 	advertisements := make(map[string]bool)
@@ -84,11 +96,6 @@ func serve() (err error) {
 			Archived: listArchived(active),
 			Message:  msg,
 		}
-		b, _ := ioutil.ReadFile("template.html")
-		tplmain, err := template.New("webpage").Parse(string(b))
-		if err != nil {
-			return
-		}
 
 		err = tplmain.Execute(w, data)
 		return
@@ -115,7 +122,11 @@ func serve() (err error) {
 			filename = path.Join("/", filename)
 			filename = path.Join("static", filename)
 			log.Debugf("serving %s", filename)
-			http.ServeFile(w, r, filename)
+			p, err := staticContent.ReadFile(filename)
+			if err != nil {
+				log.Error(err)
+			}
+			w.Write(p)
 			return
 		} else if strings.HasPrefix(r.URL.Path, "/"+flagFolder+"/") {
 			filename := filepath.Clean(strings.TrimPrefix(r.URL.Path, "/"+flagFolder+"/"))
