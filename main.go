@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"html/template"
 	"io"
+	"io/ioutil"
 	"math/rand"
 	"net/http"
 	"os"
@@ -59,77 +60,39 @@ func serve() (err error) {
 	archived := make(map[string]*os.File)
 	advertisements := make(map[string]bool)
 	mutex := &sync.Mutex{}
-	const tpl = `
-	<!DOCTYPE html>
-	<html>
-		<head>
-			<meta charset="UTF-8">
-			<meta name="viewport" content="width=device-width, initial-scale=1">
-			<title>{{.Title}}</title>
-			<style type="text/css">body{margin:40px
-				auto;max-width:650px;line-height:1.6;font-size:18px;padding:0
-				10px}h1,h2,h3{line-height:1.2}
-				.delete {
-					color:#000;
-					text-decoration:none;
-				}
 
-				
-summary {
-	white-space: nowrap;
-	cursor:pointer;
- }
- 
- details > summary {
-   list-style: none;
- }
- details > summary::-webkit-details-marker {
-   display: none;
- }
- 
- details {
-   display: inline;
- }
- 
- details[open] {
-	 padding: 1em;
-	 display: block;
- }
- 
-			</style>
-		</head>
-		<body>
-				<h1>Current broadcasts:</h1>
-				{{range .Items}}<a href="/{{ . }}">{{ . }}</a><br> <audio controls preload="none">
-					<source src="/{{ . }}?r={{$.Rand}}" type="audio/mpeg">
-					Your browser does not support the audio element.
-				</audio><br><br>
-			  {{else}}<div><strong>No broadcasts currently.</strong></div>{{end}}
-				<h2>Archived broadcasts:</h2>
-				{{if .Archived}}<p><small>click ❌ to remove an archive, ✎ to rename an archive (<em>maybe don't remove/rename ones that you didn't create</em>).</small></p>{{end}}
-				{{range .Archived}}<a href="/{{ .FullFilename }}">{{ .Filename }}</a> <small>({{.Created.Format "Jan 02, 2006 15:04:05 UTC"}},
-				<details><summary>❌</summary>are you sure? <details><summary>click->👍</summary>absolutely sure? <a class="delete" href="/{{ .FullFilename }}?remove=true">🗑️</a></details></details>
-				<details>
-				  <summary>✎</summary>
-					<form method="get" action="/{{ .FullFilename }}">
-					  <input type=hidden name=rename value=true>
-						Rename to: <input type=text name=newname value="{{ .Filename }}">
-						<input type=submit>
-					</form>
-				</details>)
-				</small><br> <audio controls preload="none">
-					<source src="/{{ .FullFilename }}?r={{$.Rand}}" type="audio/mpeg">
-					Your browser does not support the audio element.
-				</audio><br><br>
-			  {{else}}<div><strong>No archives currently.</strong></div>{{end}}
-			
-		</body>
-	</html>`
-	tplmain, err := template.New("webpage").Parse(tpl)
-	if err != nil {
+	serveMain := func(w http.ResponseWriter, r *http.Request, msg string) (err error) {
+		// serve the README
+		adverts := []string{}
+		mutex.Lock()
+		for advert := range advertisements {
+			adverts = append(adverts, strings.TrimPrefix(advert, "/"))
+		}
+		mutex.Unlock()
+
+		active := make(map[string]struct{})
+		data := struct {
+			Title    string
+			Items    []string
+			Rand     string
+			Archived []ArchivedFile
+			Message  string
+		}{
+			Title:    "Current broadcasts",
+			Items:    adverts,
+			Rand:     fmt.Sprintf("%d", rand.Int31()),
+			Archived: listArchived(active),
+			Message:  msg,
+		}
+		b, _ := ioutil.ReadFile("template.html")
+		tplmain, err := template.New("webpage").Parse(string(b))
+		if err != nil {
+			return
+		}
+
+		err = tplmain.Execute(w, data)
 		return
 	}
-
 	handler := func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Access-Control-Allow-Methods", "POST, GET, OPTIONS, PUT, DELETE")
@@ -141,37 +104,18 @@ summary {
 		}()
 
 		if r.URL.Path == "/" {
-			// serve the README
-			adverts := []string{}
-			mutex.Lock()
-			for advert := range advertisements {
-				adverts = append(adverts, strings.TrimPrefix(advert, "/"))
-			}
-			mutex.Unlock()
-
-			active := make(map[string]struct{})
-			// mutex.Lock()
-			// for ch := range channels {
-			// 	active[strings.TrimPrefix(ch, "/")] = struct{}{}
-			// }
-			// log.Debugf("active: %+v", active)
-			// mutex.Unlock()
-
-			data := struct {
-				Title    string
-				Items    []string
-				Rand     string
-				Archived []ArchivedFile
-			}{
-				Title:    "Current broadcasts",
-				Items:    adverts,
-				Rand:     fmt.Sprintf("%d", rand.Int31()),
-				Archived: listArchived(active),
-			}
-			err = tplmain.Execute(w, data)
+			serveMain(w, r, "")
 			return
 		} else if r.URL.Path == "/favicon.ico" {
 			w.WriteHeader(http.StatusOK)
+			return
+		} else if strings.HasPrefix(r.URL.Path, "/static/") {
+			filename := filepath.Clean(strings.TrimPrefix(r.URL.Path, "/static/"))
+			// This extra join implicitly does a clean and thereby prevents directory traversal
+			filename = path.Join("/", filename)
+			filename = path.Join("static", filename)
+			log.Debugf("serving %s", filename)
+			http.ServeFile(w, r, filename)
 			return
 		} else if strings.HasPrefix(r.URL.Path, "/"+flagFolder+"/") {
 			filename := filepath.Clean(strings.TrimPrefix(r.URL.Path, "/"+flagFolder+"/"))
@@ -181,12 +125,13 @@ summary {
 			v, ok := r.URL.Query()["remove"]
 			if ok && v[0] == "true" {
 				os.Remove(filename)
-				w.Write([]byte(fmt.Sprintf("removed %s", filename)))
+				filename = strings.TrimPrefix(filename, "archived/")
+				serveMain(w, r, fmt.Sprintf("removed '%s'.", filename))
 			} else {
 				v, ok := r.URL.Query()["rename"]
 				if ok && v[0] == "true" {
 					newname_param, ok := r.URL.Query()["newname"]
-					if(!ok) {
+					if !ok {
 						w.Write([]byte(fmt.Sprintf("ERROR")))
 						return
 					}
@@ -195,7 +140,10 @@ summary {
 					newname = path.Join("/", newname)
 					newname = path.Join(flagFolder, newname)
 					os.Rename(filename, newname)
-					w.Write([]byte(fmt.Sprintf("renamed %s to %s", filename, newname)))
+					filename = strings.TrimPrefix(filename, "archived/")
+					newname = strings.TrimPrefix(newname, "archived/")
+					serveMain(w, r, fmt.Sprintf("renamed '%s' to '%s'.", filename, newname))
+					// w.Write([]byte(fmt.Sprintf("renamed %s to %s", filename, newname)))
 				} else {
 					http.ServeFile(w, r, filename)
 				}
@@ -230,6 +178,7 @@ summary {
 		}
 
 		v, ok = r.URL.Query()["advertise"]
+		log.Debugf("advertise: %+v", v)
 		if ok && v[0] == "true" && doStream {
 			mutex.Lock()
 			advertisements[r.URL.Path] = true
